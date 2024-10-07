@@ -1,48 +1,63 @@
-name: CI-CD Pipeline for MERN Stack on Local Machine
+name: CI-CD Pipeline for MERN Stack with Docker
 
 on:
   push:
     branches:
-      - main # Trigger deployment on push to main branch
+      - main
 
 jobs:
-  build-and-deploy:
-    runs-on: self-hosted # Use self-hosted runner on your Windows machine
+  build-and-push-docker:
+    runs-on: ubuntu-latest
 
     steps:
       # Step 1: Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      # Step 2: Set up Node.js for backend
-      - name: Set up Node.js for Backend
-        uses: actions/setup-node@v2
+      # Step 2: Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
         with:
-          node-version: "16" # Specify the Node.js version for backend
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Step 3: Install backend dependencies and run the server
-      - name: Install Backend Dependencies and Run
+      # Step 3: Build and push the backend Docker image
+      - name: Build and push Backend Docker image
         working-directory: ./mern/backend
         run: |
-          npm install
-          pm2 stop mern-backend || true  # Stop any existing backend process
-          pm2 start index.js --name mern-backend  # Start backend using PM2
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/mern-backend:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/mern-backend:latest
 
-      # Step 4: Set up Node.js for frontend
-      - name: Set up Node.js for Frontend
-        uses: actions/setup-node@v2
-        with:
-          node-version: "16" # Specify Node.js version for frontend (same as backend)
-
-      # Step 5: Install frontend dependencies and build the app
-      - name: Install Frontend Dependencies and Build
+      # Step 4: Build and push the frontend Docker image
+      - name: Build and push Frontend Docker image
         working-directory: ./mern/frontend
         run: |
-          npm install
-          npm run build
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/mern-frontend:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/mern-frontend:latest
 
-      # Step 6: Deploy the frontend app to a local folder
-      - name: Deploy Frontend to Local Server
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Step 5: Deploy Backend and Frontend
+      - name: SSH and Deploy Backend and Frontend
         run: |
-          # Copy the frontend build files to the server's root directory
-          xcopy /E /I /Y ./mern/frontend/build\* "D:\ReactApp\"  # Change to your local directory
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+            # Pull the latest Docker images
+            docker pull ${{ secrets.DOCKER_USERNAME }}/mern-backend:latest
+            docker pull ${{ secrets.DOCKER_USERNAME }}/mern-frontend:latest
+
+            # Stop and remove the existing containers
+            docker stop mern-backend || true && docker rm mern-backend || true
+            docker stop mern-frontend || true && docker rm mern-frontend || true
+
+            # Run the backend container
+           # docker run -d --name mern-backend -p 20:20 ${{ secrets.DOCKER_USERNAME }}/mern-backend:latest
+
+            # Run the frontend container
+            docker run -d --name mern-frontend -p 20:20 ${{ secrets.DOCKER_USERNAME }}/mern-frontend:latest
+          EOF
